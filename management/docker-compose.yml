@@ -32,6 +32,8 @@ services:
       - MANAGEMENT_JWT_SECRET=${MANAGEMENT_JWT_SECRET:-12345678}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./server:/app/server  # 挂载修改后的server目录
     networks:
       - management_network
 

@@ -32,6 +32,15 @@ DB_CONFIG = {
     "user": "root",
     "password": os.getenv("MYSQL_PASSWORD", "infini_rag_flow"),
     "database": "rag_flow",
+    "connection_timeout": 30,  # 增加连接超时时间
+    "connect_timeout": 30,     # 增加连接建立超时时间
+    "pool_name": "ragflow_pool",  # 添加连接池名称
+    "pool_size": 5,            # 连接池大小
+    "autocommit": True,        # 自动提交事务
+    "failover": {              # 故障转移配置
+        "host": "mysql",       # 备用主机
+        "port": 3306           # 备用端口
+    }
 }
 
 # MinIO连接配置

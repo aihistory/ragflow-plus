@@ -55,6 +55,7 @@ services:
       - "5000:5000"
     volumes:
       - ./magic-pdf.json:/root/magic-pdf.json
+      - ../management/server:/app
     depends_on: 
       mysql:
         condition: service_healthy
