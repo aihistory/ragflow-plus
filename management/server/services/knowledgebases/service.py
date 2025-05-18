@@ -22,11 +22,19 @@ class KnowledgebaseService:
         return mysql.connector.connect(**DB_CONFIG)
 
     @classmethod
-    def get_knowledgebase_list(cls, page=1, size=10, name=''):
+    def get_knowledgebase_list(cls, page=1, size=10, name='', sort_by="create_time", sort_order="desc"):
         """获取知识库列表"""
         conn = cls._get_db_connection()
         cursor = conn.cursor(dictionary=True)
         
+        # 验证排序字段
+        valid_sort_fields = ["name", "create_time", "create_date"]
+        if sort_by not in valid_sort_fields:
+            sort_by = "create_time"
+
+        # 构建排序子句
+        sort_clause = f"ORDER BY k.{sort_by} {sort_order.upper()}"
+
         query = """
             SELECT 
                 k.id, 
@@ -45,6 +53,9 @@ class KnowledgebaseService:
             query += " WHERE k.name LIKE %s"
             params.append(f"%{name}%")
             
+        # 添加查询排序条件
+        query += f" {sort_clause}"
+
         query += " LIMIT %s OFFSET %s"
         params.extend([size, (page-1)*size])
         
@@ -66,7 +77,7 @@ class KnowledgebaseService:
                         datetime.strptime(result['create_date'], '%Y-%m-%d %H:%M:%S')
                     except ValueError:
                         result['create_date'] = ""
-        
+
         # 获取总数
         count_query = "SELECT COUNT(*) as total FROM knowledgebase"
         if name:
@@ -143,6 +154,7 @@ class KnowledgebaseService:
     @classmethod
     def create_knowledgebase(cls, **data):
         """创建知识库"""
+
         try:
             # 检查知识库名称是否已存在
             exists = cls._check_name_exists(data['name'])
@@ -152,42 +164,48 @@ class KnowledgebaseService:
             conn = cls._get_db_connection()
             cursor = conn.cursor(dictionary=True)
             
-            # 获取最早的用户ID作为tenant_id和created_by
-            tenant_id = None
-            created_by = None
-            try:
-                query_earliest_user = """
-                SELECT id FROM user 
-                WHERE create_time = (SELECT MIN(create_time) FROM user)
-                LIMIT 1
-                """
-                cursor.execute(query_earliest_user)
-                earliest_user = cursor.fetchone()
-                
-                if earliest_user:
-                    tenant_id = earliest_user['id']
-                    created_by = earliest_user['id']  # 使用最早用户ID作为created_by
-                    print(f"使用创建时间最早的用户ID作为tenant_id和created_by: {tenant_id}")
-                else:
-                    # 如果找不到用户，使用默认值
+            # 使用传入的 creator_id 作为 tenant_id 和 created_by
+            tenant_id = data.get('creator_id')
+            created_by = data.get('creator_id')
+            
+            if not tenant_id:
+                # 如果没有提供 creator_id，则使用默认值
+                print("未提供 creator_id，尝试获取最早用户 ID")
+                try:
+                    query_earliest_user = """
+                    SELECT id FROM user 
+                    WHERE create_time = (SELECT MIN(create_time) FROM user)
+                    LIMIT 1
+                    """
+                    cursor.execute(query_earliest_user)
+                    earliest_user = cursor.fetchone()
+                    
+                    if earliest_user:
+                        tenant_id = earliest_user['id']
+                        created_by = earliest_user['id']
+                        print(f"使用创建时间最早的用户ID作为tenant_id和created_by: {tenant_id}")
+                    else:
+                        # 如果找不到用户，使用默认值
+                        tenant_id = "system"
+                        created_by = "system"
+                        print(f"未找到用户, 使用默认值作为tenant_id和created_by: {tenant_id}")
+                except Exception as e:
+                    print(f"获取用户ID失败: {str(e)}，使用默认值")
                     tenant_id = "system"
                     created_by = "system"
-                    print(f"未找到用户, 使用默认值作为tenant_id和created_by: {tenant_id}")
-            except Exception as e:
-                print(f"获取用户ID失败: {str(e)}，使用默认值")
-                tenant_id = "system"
-                created_by = "system"
+            else:
+                print(f"使用传入的 creator_id 作为 tenant_id 和 created_by: {tenant_id}")
             
 
             # --- 获取动态 embd_id ---
             dynamic_embd_id = None
-            default_embd_id = 'bge-m3___VLLM@VLLM' # Fallback default
+            default_embd_id = 'bge-m3' # Fallback default
             try:
                 query_embedding_model = """
                     SELECT llm_name
                     FROM tenant_llm
                     WHERE model_type = 'embedding'
-                    ORDER BY create_time ASC
+                    ORDER BY create_time DESC
                     LIMIT 1
                 """
                 cursor.execute(query_embedding_model)
@@ -195,6 +213,9 @@ class KnowledgebaseService:
 
                 if embedding_model and embedding_model.get('llm_name'):
                     dynamic_embd_id = embedding_model['llm_name']
+                    # 对硅基流动平台进行特异性处理
+                    if dynamic_embd_id == "netease-youdao/bce-embedding-base_v1":
+                        dynamic_embd_id = "BAAI/bge-m3"
                     print(f"动态获取到的 embedding 模型 ID: {dynamic_embd_id}")
                 else:
                     dynamic_embd_id = default_embd_id
@@ -305,6 +326,10 @@ class KnowledgebaseService:
             if 'description' in data:
                 update_fields.append("description = %s")
                 params.append(data['description'])
+
+            if 'permission' in data:
+                update_fields.append("permission = %s")
+                params.append(data['permission'])
             
             # 更新时间
             current_time = datetime.now()
@@ -395,7 +420,7 @@ class KnowledgebaseService:
             raise Exception(f"批量删除知识库失败: {str(e)}")
 
     @classmethod
-    def get_knowledgebase_documents(cls, kb_id, page=1, size=10, name=''):
+    def get_knowledgebase_documents(cls, kb_id, page=1, size=10, name='', sort_by="create_time", sort_order="desc"):
         """获取知识库下的文档列表"""
         try:
             conn = cls._get_db_connection()
@@ -407,6 +432,14 @@ class KnowledgebaseService:
             if not cursor.fetchone():
                 raise Exception("知识库不存在")
             
+            # 验证排序字段
+            valid_sort_fields = ["name", "size", "create_time", "create_date"]
+            if sort_by not in valid_sort_fields:
+                sort_by = "create_time"
+
+            # 构建排序子句
+            sort_clause = f"ORDER BY d.{sort_by} {sort_order.upper()}"
+
             # 查询文档列表
             query = """
                 SELECT 
@@ -428,8 +461,11 @@ class KnowledgebaseService:
             if name:
                 query += " AND d.name LIKE %s"
                 params.append(f"%{name}%")
-                
-            query += " ORDER BY d.create_date DESC LIMIT %s OFFSET %s"
+            
+            # 添加查询排序条件
+            query += f" {sort_clause}"
+
+            query += " LIMIT %s OFFSET %s"
             params.extend([size, (page-1)*size])
             
             cursor.execute(query, params)
@@ -882,6 +918,9 @@ class KnowledgebaseService:
             if normalized_base_url.endswith('/v1'):
                 # 如果 base_url 已经是 http://host/v1 形式
                 current_test_url = normalized_base_url + '/' + endpoint_segment
+            elif normalized_base_url.endswith('/embeddings'):
+                # 如果 base_url 已经是 http://host/embeddings 形式(比如硅基流动API，无需再进行处理)
+                current_test_url = normalized_base_url
             else:
                 # 如果 base_url 是 http://host 或 http://host/api 形式
                 current_test_url = normalized_base_url + '/' + full_endpoint_path
@@ -958,6 +997,15 @@ class KnowledgebaseService:
                 # 对模型名称进行处理 (可选，根据需要保留或移除)
                 if llm_name and '___' in llm_name:
                     llm_name = llm_name.split('___')[0]
+                    
+                # (对硅基流动平台进行特异性处理)
+                if llm_name == "netease-youdao/bce-embedding-base_v1":
+                    llm_name = "BAAI/bge-m3"
+
+                # 如果 API 基础地址为空字符串，设置为硅基流动嵌入模型的 API 地址
+                if api_base == "":
+                    api_base = "https://api.siliconflow.cn/v1/embeddings"
+
                 # 如果有配置，返回
                 return {
                     "llm_name": llm_name,
@@ -989,7 +1037,8 @@ class KnowledgebaseService:
         tenant_id = cls._get_earliest_user_tenant_id()
         if not tenant_id:
             raise Exception("无法找到系统基础用户")
-
+        
+        print(f"开始设置系统 Embedding 配置: {llm_name}, {api_base}, {api_key}")
         # 执行连接测试
         is_connected, message = cls._test_embedding_connection(
             base_url=api_base,

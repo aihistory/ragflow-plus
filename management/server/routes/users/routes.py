@@ -11,9 +11,11 @@ def get_users():
         page_size = int(request.args.get('size', 10))
         username = request.args.get('username', '')
         email = request.args.get('email', '')
+        sort_by = request.args.get("sort_by", "create_time")
+        sort_order = request.args.get("sort_order", "desc")
         
         # 调用服务函数获取分页和筛选后的用户数据
-        users, total = get_users_with_pagination(current_page, page_size, username, email)
+        users, total = get_users_with_pagination(current_page, page_size, username, email, sort_by, sort_order)
         
         # 返回符合前端期望格式的数据
         return jsonify({
@@ -108,11 +110,11 @@ def reset_password_route(user_id):
         if success:
             return jsonify({
                 "code": 0,
-                "message": f"用户密码重置成功"
+                "message": "用户密码重置成功"
             })
         else:
             # service 层可能因为用户不存在或其他原因返回 False
-            return jsonify({"code": 404, "message": f"用户未找到或密码重置失败"}), 404
+            return jsonify({"code": 404, "message": "用户未找到或密码重置失败"}), 404
     except Exception as e:
         # 统一处理异常
         return jsonify({
