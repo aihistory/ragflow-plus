@@ -1,6 +1,6 @@
 services:
   management-frontend:
-    container_name: ragflowplus-management-frontend
+    # container_name: ragflowplus-management-frontend
     image: zstar1003/ragflowplus-management-web:v0.3.0
     build:
       context: .
@@ -16,7 +16,7 @@ services:
       - management_network
 
   management-backend:
-    container_name: ragflowplus-management-backend
+    # container_name: ragflowplus-management-backend
     image: zstar1003/ragflowplus-management-server:v0.3.0
     build:
       context: .

@@ -13,7 +13,7 @@
     },
     "models-dir": "/root/.cache/huggingface/hub/models--opendatalab--PDF-Extract-Kit-1.0/snapshots/782e787d46ed9b52253af6c1f69cdfcc76583e8d/models",
     "layoutreader-model-dir": "/root/.cache/huggingface/hub/models--hantian--layoutreader/snapshots/641226775a0878b1014a96ad01b9642915136853",
-    "device-mode": "cpu",
+    "device-mode": "cuda",
     "layout-config": {
         "model": "doclayout_yolo"
     },

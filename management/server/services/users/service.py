@@ -6,10 +6,14 @@ from database import DB_CONFIG
 
 def get_users_with_pagination(current_page, page_size, username='', email='', sort_by="create_time",sort_order="desc"):
     """查询用户信息，支持分页和条件筛选"""
+    print(f"Executing get_users_with_pagination with params: currentPage={current_page}, size={page_size}, username={username}, email={email}, sortBy={sort_by}, sortOrder={sort_order}")
     try:
         # 建立数据库连接
+        print(f"DEBUG: Attempting to connect to database with DB_CONFIG: {DB_CONFIG}")
         conn = mysql.connector.connect(**DB_CONFIG)
+        print("DEBUG: Database connection successful.")
         cursor = conn.cursor(dictionary=True)
+        print("DEBUG: Cursor created successfully.")
         
         # 构建WHERE子句和参数
         where_clauses = []
@@ -36,8 +40,19 @@ def get_users_with_pagination(current_page, page_size, username='', email='', so
         
         # 查询总记录数
         count_sql = f"SELECT COUNT(*) as total FROM user {where_sql}"
+        print(f"Executing count_sql: {count_sql} with params: {params}") # 调试SQL
         cursor.execute(count_sql, params)
-        total = cursor.fetchone()['total']
+        row_for_total = cursor.fetchone()
+        print(f"Row for total count: {row_for_total}") # 调试fetchone结果
+        if row_for_total is None:
+            print("Error: fetchone() returned None for count_sql. This should not happen for COUNT(*).")
+            # 考虑实际的错误处理，例如抛出特定异常或返回错误指示
+            raise Exception("Failed to fetch total count from database, fetchone() returned None.")
+        if 'total' not in row_for_total:
+            print(f"Error: 'total' key not in row_for_total. Available keys: {row_for_total.keys()}")
+            raise KeyError("Key 'total' not found in the result of count_sql.")
+        total = row_for_total['total']
+        print(f"Total records: {total}") # 调试获取到的total值
         
         # 计算分页偏移量
         offset = (current_page - 1) * page_size
@@ -60,12 +75,37 @@ def get_users_with_pagination(current_page, page_size, username='', email='', so
         # 格式化结果
         formatted_users = []
         for user in results:
+            create_time_val = user.get("create_date")
+            update_time_val = user.get("update_date")
+
+            create_time_str = ""
+            if create_time_val:
+                if isinstance(create_time_val, str):
+                    try:
+                        create_time_val = datetime.strptime(create_time_val, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        # 如果字符串无法解析，可以选择记录日志或将其视为空
+                        create_time_val = None 
+                if hasattr(create_time_val, 'strftime'):
+                    create_time_str = create_time_val.strftime("%Y-%m-%d %H:%M:%S")
+                # 如果 create_time_val 是其他类型且无法格式化，create_time_str 将保持为空
+
+            update_time_str = ""
+            if update_time_val:
+                if isinstance(update_time_val, str):
+                    try:
+                        update_time_val = datetime.strptime(update_time_val, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        update_time_val = None
+                if hasattr(update_time_val, 'strftime'):
+                    update_time_str = update_time_val.strftime("%Y-%m-%d %H:%M:%S")
+
             formatted_users.append({
-                "id": user["id"],
-                "username": user["nickname"],
-                "email": user["email"],
-                "createTime": user["create_date"].strftime("%Y-%m-%d %H:%M:%S") if user["create_date"] else "",
-                "updateTime": user["update_date"].strftime("%Y-%m-%d %H:%M:%S") if user["update_date"] else "",
+                "id": user.get("id"),
+                "username": user.get("nickname"),
+                "email": user.get("email"),
+                "createTime": create_time_str,
+                "updateTime": update_time_str,
             })
         
         return formatted_users, total

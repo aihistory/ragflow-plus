@@ -1,4 +1,5 @@
 from flask import jsonify, request
+import traceback # 新增导入
 from services.users.service import get_users_with_pagination, delete_user, create_user, update_user, reset_user_password
 from .. import users_bp
 
@@ -28,9 +29,14 @@ def get_users():
         })
     except Exception as e:
         # 错误处理
+        error_type = type(e).__name__
+        error_message = str(e)
+        tb_str = traceback.format_exc()
+        print(f"Error in get_users: Type: {error_type}, Message: {error_message}")
+        print(f"Traceback:\n{tb_str}")
         return jsonify({
             "code": 500,
-            "message": f"获取用户列表失败: {str(e)}"
+            "message": f"获取用户列表失败: {error_type} - {error_message}"
         }), 500
 
 @users_bp.route('/<string:user_id>', methods=['DELETE'])

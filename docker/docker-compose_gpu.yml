@@ -7,11 +7,11 @@ services:
       mysql:
         condition: service_healthy
     image: ${RAGFLOW_IMAGE}
-    container_name: ragflowplus-server
+    #container_name: ragflowplus-server
     ports:
       - ${SVR_HTTP_PORT}:9380
-      - 80:80
-      - 443:443
+      - 8088:80
+      - 7443:443
     volumes:
       - ./ragflow-logs:/ragflow/logs
       - ./nginx/ragflow.conf:/etc/nginx/conf.d/ragflow.conf
@@ -24,13 +24,13 @@ services:
       - MACOS=${MACOS}
     networks:
       - ragflow
-    restart: on-failure
+    restart: always
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
   # 后台信息管理系统前端
   management-frontend:
-    container_name: ragflowplus-management-frontend
+    #container_name: ragflowplus-management-frontend
     image: ${RAGFLOWPLUS_MANAGEMENT_WEB_IMAGE}
     volumes:
       - ./nginx/management_nginx.conf:/etc/nginx/conf.d/default.conf
@@ -43,19 +43,22 @@ services:
       - API_BASE_URL=/api 
     networks:
       - ragflow
-    restart: on-failure
+    restart: always
     extra_hosts:
       - "host.docker.internal:host-gateway"
       
   # 后台信息管理系统后端
   management-backend:
-    container_name: ragflowplus-management-backend
+    #container_name: ragflowplus-management-backend
     image: ${RAGFLOWPLUS_MANAGEMENT_SERVER_IMAGE}
+    command: ["python", "-u", "/app/app.py"]
     ports:
       - "5000:5000"
     volumes:
       - ./magic-pdf.json:/root/magic-pdf.json
       - ../management/server:/app
+      - ./ch_PP-OCRv4_rec_server_doc_infer.pth:/root/.cache/huggingface/hub/models-opendatalab--PDF-Extract-Kit-1.0/snapshots/782e787d46ed9b52253af6c1f69cdfcc76583e8d/models/OCR/paddleocr_torch/ch_PP-OCRv4_rec_server_doc_infer.pth
+      
     depends_on: 
       mysql:
         condition: service_healthy
@@ -64,13 +67,14 @@ services:
     env_file: .env
     environment:
       - FLASK_ENV=development
+      - FLASK_DEBUG=1 # <--- 添加这一行来强制开启调试模式
       - CORS_ALLOWED_ORIGINS=http://management-frontend
       - MANAGEMENT_ADMIN_USERNAME=${MANAGEMENT_ADMIN_USERNAME:-admin}
       - MANAGEMENT_ADMIN_PASSWORD=${MANAGEMENT_ADMIN_PASSWORD:-12345678}
       - MANAGEMENT_JWT_SECRET=${MANAGEMENT_JWT_SECRET:-12345678}
     networks:
       - ragflow
-    restart: on-failure
+    restart: always
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
@@ -82,7 +86,7 @@ services:
 
   # # vllm 嵌入模型
   # vllm-bge:
-  #   container_name: vllm-bge
+  #   # container_name: vllm-bge
   #   image: vllm/vllm-openai:latest
   #   ipc: host
   #   volumes:
@@ -91,7 +95,7 @@ services:
   #     "--model", "/models",
   #     "--served-model-name", "bge-m3",
   #     "--dtype", "float16",
-  #     "--gpu-memory-utilization", "0.9",
+  #     "--gpu-memory-utilization", "0.6",
   #   ]
   #   ports:
   #     - "8000:8000"
@@ -103,6 +107,7 @@ services:
   #             capabilities: [gpu]
   #   networks:
   #     - ragflow
+  #   restart: always  
 
   # # vllm 语言模型
   # vllm-deepseek:
@@ -116,7 +121,8 @@ services:
   #     "--served-model-name", "deepseek-r1",
   #     "--dtype", "float16",
   #     "--tensor-parallel-size", "1",
-  #     "--max-model-len", "4096"
+  #     "--max-model-len", "4096",
+  #     "--gpu-memory-utilization", "0.6"
   #   ]
   #   ports:
   #     - "8001:8000"

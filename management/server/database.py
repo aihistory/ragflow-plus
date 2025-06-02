@@ -48,10 +48,10 @@ DB_CONFIG = {
     "pool_name": "ragflow_pool",  # 添加连接池名称
     "pool_size": 5,            # 连接池大小
     "autocommit": True,        # 自动提交事务
-    "failover": {              # 故障转移配置
+    "failover": [{             # 故障转移配置 (应为列表)
         "host": "mysql",       # 备用主机
         "port": 3306           # 备用端口
-    }
+    }]
 }
 
 # MinIO连接配置
