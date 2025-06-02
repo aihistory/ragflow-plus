@@ -56,3 +56,4 @@ web/node_modules/.cache/logger/umi.log
 management/models--slanet_plus
 .trae/rules/project_rules.md
 docker/ch_PP-OCRv4_rec_server_doc_infer.pth
+node_modules/.cache/logger/umi.log

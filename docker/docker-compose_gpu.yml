@@ -54,7 +54,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./magic-pdf.json:/root/magic-pdf.json
+      - ./magic-pdf-gpu.json:/root/magic-pdf.json
       - ../management/server:/app
     depends_on: 
       mysql:

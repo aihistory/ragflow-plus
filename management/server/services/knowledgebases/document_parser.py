@@ -2,32 +2,31 @@ import os
 import tempfile
 import shutil
 import json
-from bs4 import BeautifulSoup
-import mysql.connector
 import time
 import traceback
 import re
 import requests
 from io import BytesIO
 from datetime import datetime
-from database import MINIO_CONFIG, DB_CONFIG, get_minio_client, get_es_client
+from database import MINIO_CONFIG, get_minio_client, get_es_client, get_db_connection
 from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
 from magic_pdf.data.dataset import PymuDocDataset
 from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
 from magic_pdf.config.enums import SupportedPdfParseMethod
 from magic_pdf.data.read_api import read_local_office, read_local_images
 from utils import generate_uuid
+from .rag_tokenizer import RagTokenizer
+from .excel_parser import parse_excel
+
+tknzr = RagTokenizer()
 
 
-# 自定义tokenizer和文本处理函数，替代rag.nlp中的功能
 def tokenize_text(text):
-    """将文本分词，替代rag_tokenizer功能"""
-    # 简单实现，未来可能需要改成更复杂的分词逻辑
-    return text.split()
+    return tknzr.tokenize(text)
 
 
 def merge_chunks(sections, chunk_token_num=128, delimiter="\n。；！？"):
-    """合并文本块，替代naive_merge功能"""
+    """合并文本块，替代naive_merge功能(预留函数)"""
     if not sections:
         return []
 
@@ -53,17 +52,12 @@ def merge_chunks(sections, chunk_token_num=128, delimiter="\n。；！？"):
     return chunks
 
 
-def _get_db_connection():
-    """创建数据库连接"""
-    return mysql.connector.connect(**DB_CONFIG)
-
-
 def _update_document_progress(doc_id, progress=None, message=None, status=None, run=None, chunk_count=None, process_duration=None):
     """更新数据库中文档的进度和状态"""
     conn = None
     cursor = None
     try:
-        conn = _get_db_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         updates = []
         params = []
@@ -108,7 +102,7 @@ def _update_kb_chunk_count(kb_id, count_delta):
     conn = None
     cursor = None
     try:
-        conn = _get_db_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         kb_update = """
@@ -133,7 +127,7 @@ def _create_task_record(doc_id, chunk_ids_list):
     conn = None
     cursor = None
     try:
-        conn = _get_db_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         task_id = generate_uuid()
         current_datetime = datetime.now()
@@ -149,25 +143,7 @@ def _create_task_record(doc_id, chunk_ids_list):
                 progress, progress_msg, retry_count, digest, chunk_ids, task_type, priority
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        task_params = [
-            task_id,
-            current_timestamp,
-            current_date_only,
-            current_timestamp,
-            current_date_only,
-            doc_id,
-            0,
-            1,
-            None,
-            0.0,
-            1.0,
-            "MinerU解析完成",
-            1,
-            digest,
-            chunk_ids_str,
-            "", 
-            0
-        ]
+        task_params = [task_id, current_timestamp, current_date_only, current_timestamp, current_date_only, doc_id, 0, 1, None, 0.0, 1.0, "MinerU解析完成", 1, digest, chunk_ids_str, "", 0]
         cursor.execute(task_insert, task_params)
         conn.commit()
         print(f"[Parser-INFO] Task记录创建成功，Task ID: {task_id}")
@@ -201,58 +177,7 @@ def get_bbox_from_block(block):
     return [0, 0, 0, 0]
 
 
-def process_table_content(content_list):
-    """
-    处理表格内容，将每一行分开存储
-    
-    Args:
-        content_list: 原始内容列表
-        
-    Returns:
-        处理后的内容列表
-    """
-    new_content_list = []
-    
-    for item in content_list:
-        if 'table_body' in item and item['table_body']:
-            # 使用BeautifulSoup解析HTML表格
-            soup = BeautifulSoup(item['table_body'], 'html.parser')
-            table = soup.find('table')
-            
-            if table:
-                rows = table.find_all('tr')
-                # 获取表头（第一行）
-                header_row = rows[0] if rows else None
-                
-                # 处理每一行，从第二行开始（跳过表头）
-                for i, row in enumerate(rows):
-                    # 创建新的内容项
-                    new_item = item.copy()
-                    
-                    # 创建只包含当前行的表格
-                    new_table = soup.new_tag('table')
-                    
-                    # 如果有表头，添加表头
-                    if header_row and i > 0:
-                        new_table.append(header_row)
-                    
-                    # 添加当前行
-                    new_table.append(row)
-                    
-                    # 创建新的HTML结构
-                    new_html = f"<html><body>{str(new_table)}</body></html>"
-                    new_item['table_body'] = f"\n\n{new_html}\n\n"
-                    
-                    # 添加到新的内容列表
-                    new_content_list.append(new_item)
-            else:
-                new_content_list.append(item)
-        else:
-            new_content_list.append(item)
-    
-    return new_content_list
-
-def perform_parse(doc_id, doc_info, file_info, embedding_config):
+def perform_parse(doc_id, doc_info, file_info, embedding_config, kb_info):
     """
     执行文档解析的核心逻辑
 
@@ -260,6 +185,7 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
         doc_id (str): 文档ID.
         doc_info (dict): 包含文档信息的字典 (name, location, type, kb_id, parser_config, created_by).
         file_info (dict): 包含文件信息的字典 (parent_id/bucket_name).
+        kb_info (dict): 包含知识库信息的字典 (created_by).
 
     Returns:
         dict: 包含解析结果的字典 (success, chunk_count).
@@ -305,7 +231,7 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
         if normalized_base_url.endswith("/v1"):
             # 如果 base_url 已经是 http://host/v1 形式
             embedding_url = normalized_base_url + "/" + endpoint_segment
-        elif normalized_base_url.endswith('/embeddings'):
+        elif normalized_base_url.endswith("/embeddings"):
             # 如果 base_url 已经是 http://host/embeddings 形式(比如硅基流动API，无需再进行处理)
             embedding_url = normalized_base_url
         else:
@@ -321,7 +247,7 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
         _, file_extension = os.path.splitext(file_location)
         file_type = doc_info["type"].lower()
         bucket_name = file_info["parent_id"]  # 文件存储的桶是 parent_id
-        tenant_id = doc_info["created_by"]  # 文档创建者作为 tenant_id
+        tenant_id = kb_info["created_by"]  # 知识库创建者作为 tenant_id
 
         # 进度更新回调 (直接调用内部更新函数)
         def update_progress(prog=None, msg=None):
@@ -358,7 +284,7 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
             update_progress(0.3, "分析PDF类型")
             is_ocr = ds.classify() == SupportedPdfParseMethod.OCR
             mode_msg = "OCR模式" if is_ocr else "文本模式"
-            update_progress(0.4, f"使用{mode_msg}处理PDF")
+            update_progress(0.4, f"使用{mode_msg}处理PDF，处理中，具体进度可查看日志")
 
             infer_result = ds.apply(doc_analyze, ocr=is_ocr)
 
@@ -402,8 +328,9 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
             # 获取内容列表（JSON格式）
             middle_content = pipe_result.get_middle_json()
             middle_json_content = json.loads(middle_content)
+
         # 对excel文件单独进行处理
-        elif file_type.endswith("excel") :
+        elif file_type.endswith("excel"):
             update_progress(0.3, "使用MinerU解析器")
             # 创建临时文件保存文件内容
             temp_dir = tempfile.gettempdir()
@@ -412,22 +339,11 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
                 f.write(file_content)
 
             print(f"[Parser-INFO] 临时文件路径: {temp_file_path}")
-            # 使用MinerU处理
-            ds = read_local_office(temp_file_path)[0]
-            infer_result = ds.apply(doc_analyze, ocr=True)
-
-            # 设置临时输出目录
-            temp_image_dir = os.path.join(temp_dir, f"images_{doc_id}")
-            os.makedirs(temp_image_dir, exist_ok=True)
-            image_writer = FileBasedDataWriter(temp_image_dir)
-
-            update_progress(0.6, "处理文件结果")
-            pipe_result = infer_result.pipe_txt_mode(image_writer)
 
             update_progress(0.8, "提取内容")
-            origin_content_list = pipe_result.get_content_list(os.path.basename(temp_image_dir))
             # 处理内容列表
-            content_list = process_table_content(origin_content_list)
+            content_list = parse_excel(temp_file_path)
+
         elif file_type.endswith("visual"):
             update_progress(0.3, "使用MinerU解析器")
 
@@ -441,11 +357,11 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
             # 使用MinerU处理
             ds = read_local_images(temp_file_path)[0]
             infer_result = ds.apply(doc_analyze, ocr=True)
-            
+
             update_progress(0.3, "分析PDF类型")
             is_ocr = ds.classify() == SupportedPdfParseMethod.OCR
             mode_msg = "OCR模式" if is_ocr else "文本模式"
-            update_progress(0.4, f"使用{mode_msg}处理PDF")
+            update_progress(0.4, f"使用{mode_msg}处理PDF，处理中，具体进度可查看日志")
 
             infer_result = ds.apply(doc_analyze, ocr=is_ocr)
 
@@ -539,13 +455,17 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
                 if chunk_idx == len(block_info_list):
                     print(f"[Parser-WARNING] block_info_list 的长度 ({len(block_info_list)}) 小于 content_list 的长度 ({len(content_list)})。后续块将使用默认 page_idx 和 bbox。")
 
-            if chunk_data["type"] == "text" or chunk_data["type"] == "table":
+            if chunk_data["type"] == "text" or chunk_data["type"] == "table" or chunk_data["type"] == "equation":
                 if chunk_data["type"] == "text":
                     content = chunk_data["text"]
                     if not content or not content.strip():
                         continue
                     # 过滤 markdown 特殊符号
                     content = re.sub(r"[!#\\$/]", "", content)
+                elif chunk_data["type"] == "equation":
+                    content = chunk_data["text"]
+                    if not content or not content.strip():
+                        continue
                 elif chunk_data["type"] == "table":
                     caption_list = chunk_data.get("table_caption", [])  # 获取列表，默认为空列表
                     table_body = chunk_data.get("table_body", "")  # 获取表格主体，默认为空字符串
@@ -613,7 +533,6 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
                     )
 
                     # 准备ES文档
-                    content_tokens = tokenize_text(content)  # 分词
                     current_time_es = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     current_timestamp_es = datetime.now().timestamp()
 
@@ -625,11 +544,11 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
                         "doc_id": doc_id,
                         "kb_id": kb_id,
                         "docnm_kwd": doc_info["name"],
-                        "title_tks": doc_info["name"],
-                        "title_sm_tks": doc_info["name"],
+                        "title_tks": tokenize_text(doc_info["name"]),
+                        "title_sm_tks": tokenize_text(doc_info["name"]),
                         "content_with_weight": content,
-                        "content_ltks": " ".join(content_tokens),  # 字符串类型
-                        "content_sm_ltks": " ".join(content_tokens),  # 字符串类型
+                        "content_ltks": tokenize_text(content),
+                        "content_sm_ltks": tokenize_text(content),
                         "page_num_int": [page_idx + 1],
                         "position_int": [[page_idx + 1] + bbox_reordered],  # 格式: [[page, x1, x2, y1, y2]]
                         "top_int": [1],
@@ -702,7 +621,7 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
             conn = None
             cursor = None
             try:
-                conn = _get_db_connection()
+                conn = get_db_connection()
                 cursor = conn.cursor()
 
                 # 为每个文本块找到最近的图片
@@ -755,7 +674,6 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config):
         traceback.print_exc()  # 打印详细错误堆栈
         # 更新文档状态为失败
         _update_document_progress(doc_id, status="1", run="0", message=error_message, process_duration=process_duration)  # status=1表示完成，run=0表示失败
-        # 不抛出异常，让调用者知道任务已结束（但失败）
         return {"success": False, "error": error_message}
 
     finally:
