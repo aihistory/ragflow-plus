@@ -1,6 +1,6 @@
 import mysql.connector
 import os
-import redis
+import valkey as redis
 from minio import Minio
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
