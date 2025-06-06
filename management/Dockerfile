@@ -42,11 +42,10 @@ COPY server /app
 
 # 创建 huggingface 缓存目录
 RUN mkdir -p /root/.cache/huggingface/hub/
-# 注释掉模型文件复制，因为这些文件在 management 目录下不存在
-# COPY models--opendatalab--PDF-Extract-Kit-1.0 /root/.cache/huggingface/hub/models--opendatalab--PDF-Extract-Kit-1.0
-# COPY models--hantian--layoutreader /root/.cache/huggingface/hub/models--hantian--layoutreader
-# COPY models--slanet_plus/slanet-plus.onnx /usr/local/lib/python3.10/site-packages/rapid_table/models/
-# COPY magic-pdf.json /root/magic-pdf.json
+COPY models--opendatalab--PDF-Extract-Kit-1.0 /root/.cache/huggingface/hub/models--opendatalab--PDF-Extract-Kit-1.0
+COPY models--hantian--layoutreader /root/.cache/huggingface/hub/models--hantian--layoutreader
+COPY models--slanet_plus/slanet-plus.onnx /usr/local/lib/python3.10/site-packages/rapid_table/models/
+COPY nltk_data /root/nltk_data
 
 # 暴露后端端口
 EXPOSE 5000

@@ -123,12 +123,17 @@ def _update_kb_chunk_count(kb_id, count_delta):
 
 
 def _create_task_record(doc_id, chunk_ids_list):
-    """创建task记录"""
+    """创建task记录，兼容无 priority 字段的新表结构"""
     conn = None
     cursor = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        # 检查 task 表中是否有 priority 字段
+        cursor.execute("SHOW COLUMNS FROM task LIKE 'priority'")
+        has_priority = cursor.fetchone() is not None
+
         task_id = generate_uuid()
         current_datetime = datetime.now()
         current_timestamp = int(current_datetime.timestamp() * 1000)
@@ -136,17 +141,38 @@ def _create_task_record(doc_id, chunk_ids_list):
         digest = f"{doc_id}_{0}_{1}"  # 假设 from_page=0, to_page=1
         chunk_ids_str = " ".join(chunk_ids_list)
 
-        task_insert = """
-            INSERT INTO task (
-                id, create_time, create_date, update_time, update_date,
-                doc_id, from_page, to_page, begin_at, process_duation,
-                progress, progress_msg, retry_count, digest, chunk_ids, task_type, priority
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        task_params = [task_id, current_timestamp, current_date_only, current_timestamp, current_date_only, doc_id, 0, 1, None, 0.0, 1.0, "MinerU解析完成", 1, digest, chunk_ids_str, "", 0]
-        cursor.execute(task_insert, task_params)
+        common_fields = [
+            "id",
+            "create_time",
+            "create_date",
+            "update_time",
+            "update_date",
+            "doc_id",
+            "from_page",
+            "to_page",
+            "begin_at",
+            "process_duation",
+            "progress",
+            "progress_msg",
+            "retry_count",
+            "digest",
+            "chunk_ids",
+            "task_type",
+        ]
+        common_values = [task_id, current_timestamp, current_date_only, current_timestamp, current_date_only, doc_id, 0, 1, None, 0.0, 1.0, "MinerU解析完成", 1, digest, chunk_ids_str, ""]
+
+        if has_priority:
+            common_fields.append("priority")
+            common_values.append(0)
+
+        fields_sql = ", ".join(common_fields)
+        placeholders = ", ".join(["%s"] * len(common_values))
+
+        task_insert = f"INSERT INTO task ({fields_sql}) VALUES ({placeholders})"
+        cursor.execute(task_insert, common_values)
         conn.commit()
         print(f"[Parser-INFO] Task记录创建成功，Task ID: {task_id}")
+
     except Exception as e:
         print(f"[Parser-ERROR] 创建Task记录失败: {e}")
     finally:
@@ -222,21 +248,20 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config, kb_info):
         if not embedding_api_base.startswith(("http://", "https://")):
             embedding_api_base = "http://" + embedding_api_base
 
-        # --- URL 拼接优化 (处理 /v1) ---
-        endpoint_segment = "embeddings"
-        full_endpoint_path = "v1/embeddings"
         # 移除末尾斜杠以方便判断
         normalized_base_url = embedding_api_base.rstrip("/")
 
-        if normalized_base_url.endswith("/v1"):
-            # 如果 base_url 已经是 http://host/v1 形式
-            embedding_url = normalized_base_url + "/" + endpoint_segment
+        # 如果请求url端口号为11434，则认为是ollama模型，采用ollama特定的api
+        is_ollama = "11434" in normalized_base_url
+        if is_ollama:
+            # Ollama 的特殊接口路径
+            embedding_url = normalized_base_url + "/api/embeddings"
+        elif normalized_base_url.endswith("/v1"):
+            embedding_url = normalized_base_url + "/embeddings"
         elif normalized_base_url.endswith("/embeddings"):
-            # 如果 base_url 已经是 http://host/embeddings 形式(比如硅基流动API，无需再进行处理)
             embedding_url = normalized_base_url
         else:
-            # 如果 base_url 是 http://host 或 http://host/api 等其他形式
-            embedding_url = normalized_base_url + "/" + full_endpoint_path
+            embedding_url = normalized_base_url + "/v1/embeddings"
 
     print(f"[Parser-INFO] 使用 Embedding 配置: URL='{embedding_url}', Model='{embedding_model_name}', Key={embedding_api_key}")
 
@@ -284,7 +309,7 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config, kb_info):
             update_progress(0.3, "分析PDF类型")
             is_ocr = ds.classify() == SupportedPdfParseMethod.OCR
             mode_msg = "OCR模式" if is_ocr else "文本模式"
-            update_progress(0.4, f"使用{mode_msg}处理PDF，处理中，具体进度可查看日志")
+            update_progress(0.4, f"使用{mode_msg}处理PDF，处理中，具体进度可查看容器日志")
 
             infer_result = ds.apply(doc_analyze, ocr=is_ocr)
 
@@ -497,20 +522,37 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config, kb_info):
                     if embedding_api_key:
                         headers["Authorization"] = f"Bearer {embedding_api_key}"
 
-                    embedding_resp = requests.post(
-                        embedding_url,  # 使用动态构建的 URL
-                        headers=headers,  # 添加 headers (包含可能的 API Key)
-                        json={
-                            "model": embedding_model_name,  # 使用动态获取或默认的模型名
-                            "input": content,
-                        },
-                        timeout=15,  # 稍微增加超时时间
-                    )
+                    if is_ollama:
+                        embedding_resp = requests.post(
+                            embedding_url,  # 使用动态构建的 URL
+                            headers=headers,  # 添加 headers (包含可能的 API Key)
+                            json={
+                                "model": embedding_model_name,  # 使用动态获取或默认的模型名
+                                "prompt": content,
+                            },
+                            timeout=15,  # 稍微增加超时时间
+                        )
+                    else:
+                        embedding_resp = requests.post(
+                            embedding_url,  # 使用动态构建的 URL
+                            headers=headers,  # 添加 headers (包含可能的 API Key)
+                            json={
+                                "model": embedding_model_name,  # 使用动态获取或默认的模型名
+                                "input": content,
+                            },
+                            timeout=15,  # 稍微增加超时时间
+                        )
 
                     embedding_resp.raise_for_status()
                     embedding_data = embedding_resp.json()
-                    q_1024_vec = embedding_data["data"][0]["embedding"]
+
+                    # 对ollama嵌入模型的接口返回值进行特殊处理
+                    if is_ollama:
+                        q_1024_vec = embedding_data.get("embedding")
+                    else:
+                        q_1024_vec = embedding_data["data"][0]["embedding"]
                     print(f"[Parser-INFO] 获取embedding成功，长度: {len(q_1024_vec)}")
+
                     # 检查向量维度是否为1024
                     if len(q_1024_vec) != 1024:
                         error_msg = f"[Parser-ERROR] Embedding向量维度不是1024，实际维度: {len(q_1024_vec)}, 建议使用bge-m3模型"
