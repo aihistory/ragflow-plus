@@ -1,6 +1,16 @@
+import MessageInput from '@/components/message-input';
 import MessageItem from '@/components/message-item';
+import PdfDrawer from '@/components/pdf-drawer';
+import { useClickDrawer } from '@/components/pdf-drawer/hooks';
 import { MessageType } from '@/constants/chat';
+import {
+  useFetchNextConversation,
+  useGetChatSearchParams,
+} from '@/hooks/chat-hooks';
+import { useFetchUserInfo } from '@/hooks/user-setting-hooks';
+import { buildMessageUuidWithRole } from '@/utils/chat';
 import { Flex, Spin } from 'antd';
+import { memo } from 'react';
 import {
   useCreateConversationBeforeUploadDocument,
   useGetFileIcon,
@@ -9,17 +19,6 @@ import {
   useSendNextMessage,
 } from '../hooks';
 import { buildMessageItemReference } from '../utils';
-
-import MessageInput from '@/components/message-input';
-import PdfDrawer from '@/components/pdf-drawer';
-import { useClickDrawer } from '@/components/pdf-drawer/hooks';
-import {
-  useFetchNextConversation,
-  useGetChatSearchParams,
-} from '@/hooks/chat-hooks';
-import { useFetchUserInfo } from '@/hooks/user-setting-hooks';
-import { buildMessageUuidWithRole } from '@/utils/chat';
-import { memo } from 'react';
 import styles from './index.less';
 
 interface IProps {
@@ -27,7 +26,8 @@ interface IProps {
   fontSize: number;
 }
 
-const ChatContainer = ({ controller, fontSize = 18 }: IProps) => {
+// 确认这里的默认值为 20
+const ChatContainer = ({ controller, fontSize = 20 }: IProps) => {
   const { conversationId } = useGetChatSearchParams();
   const { data: conversation } = useFetchNextConversation();
 

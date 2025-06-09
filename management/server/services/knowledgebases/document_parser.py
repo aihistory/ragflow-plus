@@ -15,6 +15,7 @@ from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
 from magic_pdf.config.enums import SupportedPdfParseMethod
 from magic_pdf.data.read_api import read_local_office, read_local_images
 from utils import generate_uuid
+from urllib.parse import urlparse
 from .rag_tokenizer import RagTokenizer
 from .excel_parser import parse_excel
 
@@ -22,34 +23,8 @@ tknzr = RagTokenizer()
 
 
 def tokenize_text(text):
+    """使用分词器对文本进行分词"""
     return tknzr.tokenize(text)
-
-
-def merge_chunks(sections, chunk_token_num=128, delimiter="\n。；！？"):
-    """合并文本块，替代naive_merge功能(预留函数)"""
-    if not sections:
-        return []
-
-    chunks = [""]
-    token_counts = [0]
-
-    for section in sections:
-        # 计算当前部分的token数量
-        text = section[0] if isinstance(section, tuple) else section
-
-        # 简单估算token数量
-        token_count = len(text.split())
-
-        # 如果当前chunk已经超过限制，创建新chunk
-        if token_counts[-1] > chunk_token_num:
-            chunks.append(text)
-            token_counts.append(token_count)
-        else:
-            # 否则添加到当前chunk
-            chunks[-1] += text
-            token_counts[-1] += token_count
-
-    return chunks
 
 
 def _update_document_progress(doc_id, progress=None, message=None, status=None, run=None, chunk_count=None, process_duration=None):
@@ -494,6 +469,11 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config, kb_info):
                 elif chunk_data["type"] == "table":
                     caption_list = chunk_data.get("table_caption", [])  # 获取列表，默认为空列表
                     table_body = chunk_data.get("table_body", "")  # 获取表格主体，默认为空字符串
+
+                    # 如果表格主体为空，说明无实际内容，跳过该表格块
+                    if not table_body.strip():
+                        continue
+
                     # 检查 caption_list 是否为列表，并且包含字符串元素
                     if isinstance(caption_list, list) and all(isinstance(item, str) for item in caption_list):
                         # 使用空格将列表中的所有字符串拼接起来
@@ -557,7 +537,7 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config, kb_info):
                     if len(q_1024_vec) != 1024:
                         error_msg = f"[Parser-ERROR] Embedding向量维度不是1024，实际维度: {len(q_1024_vec)}, 建议使用bge-m3模型"
                         print(error_msg)
-                        update_progress(-1, error_msg)
+                        update_progress(-5, error_msg)
                         raise ValueError(error_msg)
                 except Exception as e:
                     print(f"[Parser-ERROR] 获取embedding失败: {e}")
@@ -674,19 +654,20 @@ def perform_parse(doc_id, doc_info, file_info, embedding_config, kb_info):
                     for img_info in image_info_list:
                         # 计算文本块与图片的"距离"
                         distance = abs(i - img_info["position"])  # 使用位置差作为距离度量
-                        # 如果文本块与图片的距离间隔小于10个块,则认为块与图片是相关的
-                        if distance < 10:
+                        # 如果文本块与图片的距离间隔小于5个块,则认为块与图片是相关的
+                        if distance < 5:
                             nearest_image = img_info
 
                     # 如果找到了最近的图片，则更新文本块的img_id
                     if nearest_image:
+                        # v0.4.1更新，改成存储提取其相对路径部分
+                        parsed_url = urlparse(nearest_image["url"])
+                        relative_path = parsed_url.path.lstrip("/")  # 去掉开头的斜杠
                         # 更新ES中的文档
-                        direct_update = {"doc": {"img_id": nearest_image["url"]}}
+                        direct_update = {"doc": {"img_id": relative_path}}
                         es_client.update(index=index_name, id=chunk_id, body=direct_update, refresh=True)
-
                         index_name = f"ragflow_{tenant_id}"
-
-                        print(f"[Parser-INFO] 更新文本块 {chunk_id} 的图片关联: {nearest_image['url']}")
+                        print(f"[Parser-INFO] 更新文本块 {chunk_id} 的图片关联: {relative_path}")
 
             except Exception as e:
                 print(f"[Parser-ERROR] 更新文本块图片关联失败: {e}")

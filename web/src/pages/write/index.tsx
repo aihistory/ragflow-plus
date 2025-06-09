@@ -27,6 +27,7 @@ import {
   AlignmentType,
   Document,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   TextRun,
@@ -38,9 +39,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 const { Sider, Content } = Layout;
 const { Option } = Select;
 
+// --- KEY DEFINITIONS ---
 const LOCAL_STORAGE_TEMPLATES_KEY = 'userWriteTemplates_v4_no_restore_final';
 const LOCAL_STORAGE_INIT_FLAG_KEY =
   'userWriteTemplates_initialized_v4_no_restore_final';
+// 为草稿内容定义一个清晰的 key
+const LOCAL_STORAGE_DRAFT_KEY = 'writeDraftContent';
 
 interface TemplateItem {
   id: string;
@@ -55,13 +59,11 @@ interface KnowledgeBaseItem {
 
 type MarkedHeadingToken = Tokens.Heading;
 type MarkedParagraphToken = Tokens.Paragraph;
+type MarkedImageToken = Tokens.Image;
 type MarkedListItem = Tokens.ListItem;
 type MarkedListToken = Tokens.List;
-type MarkedSpaceToken = Tokens.Space;
 
-// 定义插入点标记，以便在onChange时识别并移除
-// const INSERTION_MARKER = '【AI内容将插入此处】';
-const INSERTION_MARKER = ''; // 改成空字符串，发现使用插入点标记体验不佳；
+const INSERTION_MARKER = '';
 
 const Write = () => {
   const { t } = useTranslate('write');
@@ -69,11 +71,9 @@ const Write = () => {
   const [aiQuestion, setAiQuestion] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [dialogId] = useState('');
-  // cursorPosition 存储用户点击设定的插入点位置
   const [cursorPosition, setCursorPosition] = useState<number | null>(null);
-  // showCursorIndicator 现在仅用于控制文档中是否显示 'INSERTION_MARKER'，
   const [showCursorIndicator, setShowCursorIndicator] = useState(false);
-  const textAreaRef = useRef<any>(null); // Ant Design Input.TextArea 的 ref 类型
+  const textAreaRef = useRef<any>(null);
 
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [isTemplateModalVisible, setIsTemplateModalVisible] = useState(false);
@@ -92,20 +92,16 @@ const Write = () => {
   const [modelTemperature, setModelTemperature] = useState<number>(1.0);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [isLoadingKbs, setIsLoadingKbs] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false); // 标记AI是否正在流式输出
+  const [isStreaming, setIsStreaming] = useState(false);
 
-  // currentStreamedAiOutput 直接接收 useSendMessageWithSse 返回的累积内容
   const [currentStreamedAiOutput, setCurrentStreamedAiOutput] = useState('');
-  // 使用 useRef 存储 AI 插入点前后的内容，以及插入点位置，避免在流式更新中出现闭包陷阱
   const contentBeforeAiInsertionRef = useRef('');
   const contentAfterAiInsertionRef = useRef('');
   const aiInsertionStartPosRef = useRef<number | null>(null);
 
-  // 使用 useFetchKnowledgeList hook 获取真实数据
   const { list: knowledgeList, loading: isLoadingKnowledgeList } =
     useFetchKnowledgeList(true);
 
-  // 使用流式消息发送钩子
   const {
     send: sendMessage,
     answer,
@@ -118,7 +114,7 @@ const Write = () => {
       {
         id: 'default_1_v4f',
         name: t('defaultTemplate'),
-        content: `# ${t('defaultTemplateTitle')}\n \n ## ${t('introduction')}\n  \n ## ${t('mainContent')}\n \n ## ${t('conclusion')}\n  `,
+        content: `# ${t('defaultTemplateTitle')}\n \n ## ${t('introduction')}\n \n ## ${t('mainContent')}\n \n ## ${t('conclusion')}\n  `,
         isCustom: false,
       },
       {
@@ -137,63 +133,75 @@ const Write = () => {
     [t],
   );
 
-  const loadOrInitializeTemplates = useCallback(() => {
-    try {
-      const initialized = localStorage.getItem(LOCAL_STORAGE_INIT_FLAG_KEY);
-      let currentTemplates: TemplateItem[] = [];
-      if (initialized === 'true') {
-        const savedTemplatesString = localStorage.getItem(
-          LOCAL_STORAGE_TEMPLATES_KEY,
-        );
-        currentTemplates = savedTemplatesString
-          ? JSON.parse(savedTemplatesString)
-          : getInitialDefaultTemplateDefinitions();
-        if (!savedTemplatesString) {
+  //初始化逻辑
+  useEffect(() => {
+    // 定义一个内部函数来处理初始化，避免在 useEffect 中直接使用 async
+    const initialize = () => {
+      try {
+        // 加载或初始化模板列表
+        const initialized = localStorage.getItem(LOCAL_STORAGE_INIT_FLAG_KEY);
+        let currentTemplates: TemplateItem[] = [];
+        if (initialized === 'true') {
+          const savedTemplatesString = localStorage.getItem(
+            LOCAL_STORAGE_TEMPLATES_KEY,
+          );
+          currentTemplates = savedTemplatesString
+            ? JSON.parse(savedTemplatesString)
+            : getInitialDefaultTemplateDefinitions();
+        } else {
+          currentTemplates = getInitialDefaultTemplateDefinitions();
           localStorage.setItem(
             LOCAL_STORAGE_TEMPLATES_KEY,
             JSON.stringify(currentTemplates),
           );
+          localStorage.setItem(LOCAL_STORAGE_INIT_FLAG_KEY, 'true');
         }
-      } else {
-        currentTemplates = getInitialDefaultTemplateDefinitions();
-        localStorage.setItem(
-          LOCAL_STORAGE_TEMPLATES_KEY,
-          JSON.stringify(currentTemplates),
-        );
-        localStorage.setItem(LOCAL_STORAGE_INIT_FLAG_KEY, 'true');
-      }
-      setTemplates(currentTemplates);
-      if (currentTemplates.length > 0 && !selectedTemplate) {
-        setSelectedTemplate(currentTemplates[0].id);
-        setContent(currentTemplates[0].content);
-      } else if (selectedTemplate) {
-        const current = currentTemplates.find(
-          (ts) => ts.id === selectedTemplate,
-        );
-        if (current) setContent(current.content);
-        else if (currentTemplates.length > 0) {
-          setSelectedTemplate(currentTemplates[0].id);
-          setContent(currentTemplates[0].content);
-        } else {
-          setSelectedTemplate('');
-          setContent('');
-        }
-      }
-    } catch (error) {
-      console.error('加载或初始化模板失败:', error);
-      message.error(t('loadTemplatesFailedError'));
-      const fallbackDefaults = getInitialDefaultTemplateDefinitions();
-      setTemplates(fallbackDefaults);
-      if (fallbackDefaults.length > 0) {
-        setSelectedTemplate(fallbackDefaults[0].id);
-        setContent(fallbackDefaults[0].content);
-      }
-    }
-  }, [selectedTemplate, getInitialDefaultTemplateDefinitions, t]);
+        setTemplates(currentTemplates);
 
+        // 设定编辑器初始内容
+        // 优先级 1: 尝试从 localStorage 加载上次的草稿
+        const draftContent = localStorage.getItem(LOCAL_STORAGE_DRAFT_KEY);
+
+        if (draftContent !== null) {
+          // 如果存在草稿，无论模板是什么，都优先恢复草稿
+          setContent(draftContent);
+        } else if (currentTemplates.length > 0) {
+          // 优先级 2: 如果没有草稿，则加载第一个模板作为初始内容
+          const initialTemplate = currentTemplates[0];
+          setSelectedTemplate(initialTemplate.id);
+          setContent(initialTemplate.content);
+        }
+        // 如果既没有草稿也没有模板，内容将保持为空字符串
+      } catch (error) {
+        console.error('加载或初始化模板与内容失败:', error);
+        message.error(t('loadTemplatesFailedError'));
+        // 出现错误时的回退逻辑
+        const fallbackDefaults = getInitialDefaultTemplateDefinitions();
+        setTemplates(fallbackDefaults);
+        if (fallbackDefaults.length > 0) {
+          setSelectedTemplate(fallbackDefaults[0].id);
+          setContent(fallbackDefaults[0].content);
+        }
+      }
+    };
+
+    initialize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // <-- 使用空依赖数组，确保此 effect 只在组件首次挂载时运行一次！
+
+  // 在 content 变化时，自动保存草稿到 localStorage
   useEffect(() => {
-    loadOrInitializeTemplates();
-  }, [loadOrInitializeTemplates]);
+    // 使用防抖技术，避免过于频繁地写入 localStorage
+    const timer = setTimeout(() => {
+      // 只有在 content 不是初始空状态时才保存，避免覆盖有意义的草稿为空内容
+      if (content) {
+        localStorage.setItem(LOCAL_STORAGE_DRAFT_KEY, content);
+      }
+    }, 1000); // 延迟1秒保存
+
+    // 组件卸载或 content 更新时，清除上一个计时器
+    return () => clearTimeout(timer);
+  }, [content]);
 
   // 将 knowledgeList 数据同步到 knowledgeBases 状态
   useEffect(() => {
@@ -209,31 +217,26 @@ const Write = () => {
   }, [knowledgeList, isLoadingKnowledgeList]);
 
   // --- 调整流式响应处理逻辑 ---
-  // 阶段1: 累积 AI 输出片段，用于实时显示（包括 <think> 标签）
   useEffect(() => {
     if (isStreaming && answer && answer.answer) {
       setCurrentStreamedAiOutput(answer.answer);
     }
   }, [isStreaming, answer]);
 
-  // 阶段2: 当流式输出完成时 (done 为 true)
   useEffect(() => {
     if (done) {
       setIsStreaming(false);
       setIsAiLoading(false);
       let processedAiOutput = currentStreamedAiOutput;
       if (processedAiOutput) {
-        // Regex to remove <think>...</think> including content
         processedAiOutput = processedAiOutput.replace(
           /<think>.*?<\/think>/gs,
           '',
         );
       }
 
-      // 将最终累积的AI内容和初始文档内容拼接，更新到主内容状态
       setContent((prevContent) => {
         if (aiInsertionStartPosRef.current !== null) {
-          // 使用 useRef 中存储的初始内容和最终处理过的 AI 输出
           const finalContent =
             contentBeforeAiInsertionRef.current +
             processedAiOutput +
@@ -243,7 +246,6 @@ const Write = () => {
         return prevContent;
       });
 
-      // AI完成回答后，将光标实际移到新内容末尾
       if (
         textAreaRef.current?.resizableTextArea?.textArea &&
         aiInsertionStartPosRef.current !== null
@@ -258,65 +260,34 @@ const Write = () => {
         setCursorPosition(newCursorPos);
       }
 
-      // 清理流式相关的临时状态和 useRef
-      setCurrentStreamedAiOutput(''); // 清空累积内容
+      setCurrentStreamedAiOutput('');
       contentBeforeAiInsertionRef.current = '';
       contentAfterAiInsertionRef.current = '';
       aiInsertionStartPosRef.current = null;
       setShowCursorIndicator(true);
     }
-  }, [done, currentStreamedAiOutput]); // 依赖 done 和 currentStreamedAiOutput，确保在 done 时拿到最新的 currentStreamedAiOutput
+  }, [done, currentStreamedAiOutput]);
 
-  // 监听 currentStreamedAiOutput 的变化，实时更新主 content 状态以实现流式显示
   useEffect(() => {
     if (isStreaming && aiInsertionStartPosRef.current !== null) {
-      // 实时更新编辑器内容，保留 <think> 标签内容
       setContent(
         contentBeforeAiInsertionRef.current +
           currentStreamedAiOutput +
           contentAfterAiInsertionRef.current,
       );
-      // 同时更新 cursorPosition，让光标跟随 AI 输出移动（基于包含 think 标签的原始长度）
       setCursorPosition(
         aiInsertionStartPosRef.current + currentStreamedAiOutput.length,
       );
     }
-  }, [currentStreamedAiOutput, isStreaming, aiInsertionStartPosRef]);
+  }, [currentStreamedAiOutput, isStreaming]); // 移除了 aiInsertionStartPosRef 的依赖
 
-  useEffect(() => {
-    const loadDraftContent = () => {
-      try {
-        const draftContent = localStorage.getItem('writeDraftContent');
-        if (
-          draftContent &&
-          !content &&
-          (!selectedTemplate ||
-            templates.find((t) => t.id === selectedTemplate)?.content === '')
-        ) {
-          setContent(draftContent);
-        }
-      } catch (error) {
-        console.error('加载暂存内容失败:', error);
-      }
-    };
-    if (localStorage.getItem(LOCAL_STORAGE_INIT_FLAG_KEY) === 'true') {
-      loadDraftContent();
-    }
-  }, [content, selectedTemplate, templates]);
-
-  useEffect(() => {
-    // 防抖保存，防止频繁写入 localStorage
-    const timer = setTimeout(
-      () => localStorage.setItem('writeDraftContent', content),
-      1000,
-    );
-    return () => clearTimeout(timer);
-  }, [content]);
-
+  // 当用户主动选择一个模板时，用模板内容覆盖当前编辑器内容
   const handleTemplateSelect = (templateId: string) => {
     setSelectedTemplate(templateId);
     const item = templates.find((t) => t.id === templateId);
-    if (item) setContent(item.content);
+    if (item) {
+      setContent(item.content); // 这会覆盖当前内容，并触发上面的 useEffect 保存为新的草稿
+    }
   };
 
   const handleSaveTemplate = () => {
@@ -351,7 +322,6 @@ const Write = () => {
     }
   };
 
-  // 删除模板
   const handleDeleteTemplate = (templateId: string) => {
     try {
       const updatedTemplates = templates.filter((t) => t.id !== templateId);
@@ -362,8 +332,9 @@ const Write = () => {
       );
       if (selectedTemplate === templateId) {
         if (updatedTemplates.length > 0) {
-          setSelectedTemplate(updatedTemplates[0].id);
-          setContent(updatedTemplates[0].content);
+          const newSelectedTemplate = updatedTemplates[0];
+          setSelectedTemplate(newSelectedTemplate.id);
+          setContent(newSelectedTemplate.content);
         } else {
           setSelectedTemplate('');
           setContent('');
@@ -376,26 +347,18 @@ const Write = () => {
     }
   };
 
-  // 获取上下文内容的辅助函数
   const getContextContent = (
     cursorPos: number,
     currentDocumentContent: string,
-    maxLength: number = 4000, // 截取插入点上下文总共4000个字符
+    maxLength: number = 4000,
   ) => {
-    // 注意: 这里的 currentDocumentContent 传入的是 AI 提问时编辑器里的总内容，
-    // 而不是 contentBeforeAiInsertionRef + contentAfterAiInsertionRef，因为可能包含标记
     const beforeCursor = currentDocumentContent.substring(0, cursorPos);
     const afterCursor = currentDocumentContent.substring(cursorPos);
-
-    // 使用更明显的插入点标记
-    // const insertMarker = '[AI 内容插入点]';
     const insertMarker = '';
     const availableLength = maxLength - insertMarker.length;
 
     if (currentDocumentContent.length <= availableLength) {
       return {
-        beforeCursor,
-        afterCursor,
         contextContent: beforeCursor + insertMarker + afterCursor,
       };
     }
@@ -404,25 +367,20 @@ const Write = () => {
     let finalBefore = beforeCursor;
     let finalAfter = afterCursor;
 
-    // 如果前半部分太长，截断并在前面加省略号
     if (beforeCursor.length > halfLength) {
       finalBefore =
         '...' + beforeCursor.substring(beforeCursor.length - halfLength + 3);
     }
 
-    // 如果后半部分太长，截断并在后面加省略号
     if (afterCursor.length > halfLength) {
       finalAfter = afterCursor.substring(0, halfLength - 3) + '...';
     }
 
     return {
-      beforeCursor,
-      afterCursor,
       contextContent: finalBefore + insertMarker + finalAfter,
     };
   };
 
-  // 处理问题请求提交
   const handleAiQuestionSubmit = async (
     e: React.KeyboardEvent<HTMLTextAreaElement>,
   ) => {
@@ -433,18 +391,15 @@ const Write = () => {
         return;
       }
 
-      // 检查是否选择了知识库
       if (selectedKnowledgeBases.length === 0) {
         message.warning('请至少选择一个知识库');
         return;
       }
 
-      // 如果AI正在流式输出，停止它，并处理新问题
       if (isStreaming) {
-        stopOutputMessage(); // 停止当前的流式输出
-        setIsStreaming(false); // 立即设置为false，中断流
-        setIsAiLoading(false); // 确保加载状态也停止
-
+        stopOutputMessage();
+        setIsStreaming(false);
+        setIsAiLoading(false);
         const contentToCleanOnInterrupt =
           contentBeforeAiInsertionRef.current +
           currentStreamedAiOutput +
@@ -454,46 +409,39 @@ const Write = () => {
           '',
         );
         setContent(cleanedContent);
-
-        setCurrentStreamedAiOutput(''); // 清除旧的流式内容
-        contentBeforeAiInsertionRef.current = ''; // 清理 useRef
+        setCurrentStreamedAiOutput('');
+        contentBeforeAiInsertionRef.current = '';
         contentAfterAiInsertionRef.current = '';
         aiInsertionStartPosRef.current = null;
         message.info('已中断上一次AI回答，正在处理新问题...');
-        // 稍作延迟，确保状态更新后再处理新问题，防止竞态条件
         await new Promise((resolve) => {
           setTimeout(resolve, 100);
         });
       }
 
-      // 如果当前光标位置无效，提醒用户设置
       if (cursorPosition === null) {
         message.warning('请先点击文本框以设置AI内容插入位置。');
         return;
       }
 
-      // 捕获 AI 插入点前后的静态内容，存储到 useRef
       const currentCursorPos = cursorPosition;
-      // 此时的 content 应该是用户当前编辑器的实际内容，包括可能存在的INSERTION_MARKER
-      // 但由于 INSERTION_MARKER 为空，所以就是当前的主 content
       contentBeforeAiInsertionRef.current = content.substring(
         0,
         currentCursorPos,
       );
       contentAfterAiInsertionRef.current = content.substring(currentCursorPos);
-      aiInsertionStartPosRef.current = currentCursorPos; // 记录确切的开始插入位置
+      aiInsertionStartPosRef.current = currentCursorPos;
 
       setIsAiLoading(true);
-      setIsStreaming(true); // 标记AI开始流式输出
-      setCurrentStreamedAiOutput(''); // 清空历史累积内容，为新的流做准备
+      setIsStreaming(true);
+      setCurrentStreamedAiOutput('');
 
       try {
         const authorization = localStorage.getItem('Authorization');
         if (!authorization) {
           message.error(t('loginRequiredError'));
           setIsAiLoading(false);
-          setIsStreaming(false); // 停止流式标记
-          // 失败时也清理临时状态
+          setIsStreaming(false);
           setCurrentStreamedAiOutput('');
           contentBeforeAiInsertionRef.current = '';
           contentAfterAiInsertionRef.current = '';
@@ -501,12 +449,8 @@ const Write = () => {
           return;
         }
 
-        // 构建请求内容，将上下文内容发送给AI
         let questionWithContext = aiQuestion;
-
-        // 只有当用户设置了插入位置时才包含上下文
         if (aiInsertionStartPosRef.current !== null) {
-          // 传递给 getContextContent 的 content 应该是当前编辑器完整的，包含marker的
           const { contextContent } = getContextContent(
             aiInsertionStartPosRef.current,
             content,
@@ -514,7 +458,6 @@ const Write = () => {
           questionWithContext = `${aiQuestion}\n\n上下文内容：\n${contextContent}`;
         }
 
-        // 发送流式请求
         await sendMessage({
           question: questionWithContext,
           kb_ids: selectedKnowledgeBases,
@@ -524,31 +467,24 @@ const Write = () => {
           temperature: modelTemperature,
         });
 
-        setAiQuestion(''); // 清空输入框
-        // 重新聚焦文本框，但不是AI问答框，而是主编辑区
+        setAiQuestion('');
         if (textAreaRef.current?.resizableTextArea?.textArea) {
           textAreaRef.current.resizableTextArea.textArea.focus();
         }
       } catch (error: any) {
         console.error('AI助手处理失败:', error);
-        if (error.code === 'ECONNABORTED' || error.name === 'AbortError') {
-          message.error(t('aiRequestTimeoutError'));
-        } else if (error.response?.data?.message) {
-          message.error(
-            `${t('aiRequestFailedError')}: ${error.response.data.message}`,
-          );
-        } else {
-          message.error(t('aiRequestFailedError'));
-        }
-      } finally {
-        // AI加载状态在 done 状态或错误处理中会更新，这里不主动设置为 false
-        // 只有当 isStreaming 状态完全结束时，才彻底清除临时状态
+        const errorMessage =
+          error.code === 'ECONNABORTED' || error.name === 'AbortError'
+            ? t('aiRequestTimeoutError')
+            : error.response?.data?.message
+              ? `${t('aiRequestFailedError')}: ${error.response.data.message}`
+              : t('aiRequestFailedError');
+        message.error(errorMessage);
       }
     }
   };
 
-  // 导出为Word
-  const handleSave = () => {
+  const handleSave = async () => {
     const selectedTemplateItem = templates.find(
       (item) => item.id === selectedTemplate,
     );
@@ -556,7 +492,9 @@ const Write = () => {
       ? selectedTemplateItem.name
       : t('document', { defaultValue: '文档' });
     const today = new Date();
-    const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+    const dateStr = `${today.getFullYear()}${String(
+      today.getMonth() + 1,
+    ).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
     const fileName = `${baseName}_${dateStr}.docx`;
 
     if (!content.trim()) {
@@ -570,6 +508,27 @@ const Write = () => {
       const tokens = marked.lexer(content) as Token[];
       const paragraphs: Paragraph[] = [];
 
+      // 辅助函数，用于获取图片尺寸以保持宽高比
+      const getImageDimensions = (
+        buffer: ArrayBuffer,
+      ): Promise<{ width: number; height: number }> => {
+        return new Promise((resolve, reject) => {
+          const blob = new Blob([buffer]);
+          const url = URL.createObjectURL(blob);
+          const img = new window.Image();
+          img.onload = () => {
+            resolve({ width: img.naturalWidth, height: img.naturalHeight });
+            URL.revokeObjectURL(url); // 清理
+          };
+          img.onerror = (err) => {
+            reject(err);
+            URL.revokeObjectURL(url); // 清理
+          };
+          img.src = url;
+        });
+      };
+
+      // 辅助函数：解析文本类型的内联元素
       function parseTokensToRuns(
         inlineTokens: Tokens.Generic[] | undefined,
       ): TextRun[] {
@@ -577,40 +536,33 @@ const Write = () => {
         if (!inlineTokens) return runs;
 
         inlineTokens.forEach((token) => {
+          // 跳过 image token，因为它会在主循环中被特殊处理
+          if (token.type === 'image') return;
+
           if (token.type === 'text') {
-            runs.push(new TextRun(token.raw)); // Use raw for exact text
-          } else if (
-            token.type === 'strong' &&
-            'text' in token &&
-            typeof token.text === 'string'
-          ) {
-            runs.push(new TextRun({ text: token.text, bold: true }));
-          } else if (
-            token.type === 'em' &&
-            'text' in token &&
-            typeof token.text === 'string'
-          ) {
-            runs.push(new TextRun({ text: token.text, italics: true }));
-          } else if (
-            token.type === 'codespan' &&
-            'text' in token &&
-            typeof token.text === 'string'
-          ) {
-            runs.push(new TextRun({ text: token.text, style: 'Consolas' }));
-          } else if (
-            token.type === 'del' &&
-            'text' in token &&
-            typeof token.text === 'string'
-          ) {
-            runs.push(new TextRun({ text: token.text, strike: true }));
+            runs.push(new TextRun(token.raw));
+          } else if (token.type === 'strong' && 'text' in token) {
+            runs.push(new TextRun({ text: token.text as string, bold: true }));
+          } else if (token.type === 'em' && 'text' in token) {
+            runs.push(
+              new TextRun({ text: token.text as string, italics: true }),
+            );
+          } else if (token.type === 'codespan' && 'text' in token) {
+            runs.push(
+              new TextRun({ text: token.text as string, style: 'Consolas' }),
+            );
+          } else if (token.type === 'del' && 'text' in token) {
+            runs.push(
+              new TextRun({ text: token.text as string, strike: true }),
+            );
           } else if (
             token.type === 'link' &&
             'text' in token &&
-            typeof token.text === 'string' &&
-            'href' in token &&
-            typeof token.href === 'string'
+            'href' in token
           ) {
-            runs.push(new TextRun({ text: token.text, style: 'Hyperlink' }));
+            runs.push(
+              new TextRun({ text: token.text as string, style: 'Hyperlink' }),
+            );
           } else if ('raw' in token) {
             runs.push(new TextRun(token.raw));
           }
@@ -618,7 +570,11 @@ const Write = () => {
         return runs;
       }
 
-      tokens.forEach((token) => {
+      // 用于匹配 Markdown 图片语法的正则表达式
+      const imageMarkdownRegex = /!\[.*?\]\((.*?)\)/;
+
+      // 使用 for...of 循环以支持 await
+      for (const token of tokens) {
         if (token.type === 'heading') {
           const headingToken = token as MarkedHeadingToken;
           let docxHeadingLevel: (typeof HeadingLevel)[keyof typeof HeadingLevel];
@@ -646,16 +602,7 @@ const Write = () => {
           }
           paragraphs.push(
             new Paragraph({
-              children: parseTokensToRuns(
-                headingToken.tokens ||
-                  ([
-                    {
-                      type: 'text',
-                      raw: headingToken.text,
-                      text: headingToken.text,
-                    },
-                  ] as any),
-              ),
+              children: parseTokensToRuns(headingToken.tokens),
               heading: docxHeadingLevel,
               spacing: {
                 after: 200 - headingToken.depth * 20,
@@ -665,16 +612,96 @@ const Write = () => {
           );
         } else if (token.type === 'paragraph') {
           const paraToken = token as MarkedParagraphToken;
-          const runs = parseTokensToRuns(paraToken.tokens);
-          paragraphs.push(
-            new Paragraph({
-              children: runs.length > 0 ? runs : [new TextRun('')],
-              spacing: { after: 120 },
-            }),
-          );
+          const paragraphChildren: (TextRun | ImageRun)[] = [];
+
+          if (paraToken.tokens) {
+            for (const inlineToken of paraToken.tokens) {
+              let isImage = false;
+              let imageUrl = '';
+              let rawMarkdownForImage = inlineToken.raw;
+
+              // 方案一: `marked` 正确解析为 'image' 类型
+              if (inlineToken.type === 'image') {
+                isImage = true;
+                imageUrl = (inlineToken as MarkedImageToken).href;
+              }
+              // 方案二 (后备): `marked` 未能解析，但文本内容匹配图片格式
+              else if (inlineToken.type === 'text') {
+                const match = inlineToken.raw.match(imageMarkdownRegex);
+                if (match && match[1]) {
+                  isImage = true;
+                  imageUrl = match[1]; // 获取括号内的 URL
+                }
+              }
+
+              // 如果是图片，则下载并处理
+              if (isImage) {
+                try {
+                  message.info(`正在下载图片: ${imageUrl.substring(0, 50)}...`);
+                  const response = await fetch(imageUrl);
+                  if (!response.ok)
+                    throw new Error(`下载图片失败: ${response.statusText}`);
+
+                  const imageBuffer = await response.arrayBuffer();
+                  const { width: naturalWidth, height: naturalHeight } =
+                    await getImageDimensions(imageBuffer);
+
+                  const aspectRatio =
+                    naturalWidth > 0 ? naturalHeight / naturalWidth : 1;
+                  const docxWidth = 540;
+                  const docxHeight = docxWidth * aspectRatio;
+
+                  paragraphChildren.push(
+                    new ImageRun({
+                      data: imageBuffer,
+                      type: 'png',
+                      transformation: {
+                        width: docxWidth,
+                        height: docxHeight,
+                      },
+                    }),
+                  );
+                } catch (error) {
+                  console.error(`无法加载或插入图片 ${imageUrl}:`, error);
+                  message.warning(
+                    `图片加载失败: ${imageUrl}，已在文档中标注。`,
+                  );
+                  paragraphChildren.push(
+                    new TextRun({
+                      text: `[图片加载失败: ${rawMarkdownForImage}]`,
+                      italics: true,
+                      color: 'FF0000',
+                    }),
+                  );
+                }
+              } else {
+                // 如果不是图片，则作为普通文本处理
+                const runs = parseTokensToRuns([inlineToken]);
+                paragraphChildren.push(...runs);
+              }
+            }
+          }
+
+          if (paragraphChildren.length > 0) {
+            paragraphs.push(
+              new Paragraph({
+                children: paragraphChildren,
+                spacing: { after: 120 },
+                alignment:
+                  paragraphChildren.length === 1 &&
+                  paragraphChildren[0] instanceof ImageRun
+                    ? AlignmentType.CENTER
+                    : AlignmentType.LEFT,
+              }),
+            );
+          } else {
+            paragraphs.push(new Paragraph({}));
+          }
         } else if (token.type === 'list') {
           const listToken = token as MarkedListToken;
           listToken.items.forEach((listItem: MarkedListItem) => {
+            // 注意：列表项内部也可能包含图片，但为简化，此处暂不处理。
+            // 如果列表项中也需要图片，需要将 paragraph 的逻辑应用到这里。
             const itemRuns = parseTokensToRuns(listItem.tokens);
             paragraphs.push(
               new Paragraph({
@@ -688,16 +715,9 @@ const Write = () => {
           });
           paragraphs.push(new Paragraph({ spacing: { after: 80 } }));
         } else if (token.type === 'space') {
-          const spaceToken = token as MarkedSpaceToken;
-          const newlines = (spaceToken.raw.match(/\n/g) || []).length;
-          if (newlines > 1) {
-            for (let i = 0; i < newlines; i++)
-              paragraphs.push(new Paragraph({}));
-          } else {
-            paragraphs.push(new Paragraph({ spacing: { after: 80 } }));
-          }
+          paragraphs.push(new Paragraph({}));
         }
-      });
+      }
 
       if (paragraphs.length === 0 && content.trim()) {
         paragraphs.push(new Paragraph({ children: [new TextRun(content)] }));
@@ -745,7 +765,6 @@ const Write = () => {
     }
   };
 
-  // 修改编辑器渲染函数，添加光标标记
   const renderEditor = () => {
     let displayContent = content; // 默认显示主内容状态
 
@@ -862,6 +881,7 @@ const Write = () => {
       </div>
     );
   };
+
   const renderPreview = () => (
     <div
       style={{
@@ -913,6 +933,7 @@ const Write = () => {
     }
   };
 
+  // ... JSX 结构无变化，保持原样
   return (
     <Layout
       style={{
@@ -973,20 +994,22 @@ const Write = () => {
               renderItem={(item) => (
                 <List.Item
                   actions={[
-                    <Popconfirm
-                      key="delete"
-                      title={t('confirmDeleteTemplate')}
-                      onConfirm={() => handleDeleteTemplate(item.id)}
-                      okText={t('confirm')}
-                      cancelText={t('cancel')}
-                    >
-                      <Button
-                        type="text"
-                        danger
-                        icon={<DeleteOutlined />}
-                        size="small"
-                      />
-                    </Popconfirm>,
+                    item.isCustom && ( // 只对自定义模板显示删除按钮
+                      <Popconfirm
+                        key="delete"
+                        title={t('confirmDeleteTemplate')}
+                        onConfirm={() => handleDeleteTemplate(item.id)}
+                        okText={t('confirm')}
+                        cancelText={t('cancel')}
+                      >
+                        <Button
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          size="small"
+                        />
+                      </Popconfirm>
+                    ),
                   ]}
                   style={{
                     cursor: 'pointer',
@@ -1193,13 +1216,11 @@ const Write = () => {
               onKeyDown={handleAiQuestionSubmit}
               disabled={isAiLoading}
             />
-
-            {/* 插入位置提示 或 AI正在回答时的提示 - 现已常驻显示 */}
-            {isStreaming ? ( // AI正在回答时优先显示此提示
+            {isStreaming ? (
               <div
                 style={{
                   fontSize: '12px',
-                  color: '#faad14', // 警告色
+                  color: '#faad14',
                   padding: '6px 10px',
                   backgroundColor: '#fffbe6',
                   borderRadius: '4px',
@@ -1208,8 +1229,7 @@ const Write = () => {
               >
                 ✨ AI正在生成回答，请稍候...
               </div>
-            ) : // AI未回答时
-            cursorPosition !== null ? ( // 如果光标已设置
+            ) : cursorPosition !== null ? (
               <div
                 style={{
                   fontSize: '12px',
@@ -1223,11 +1243,10 @@ const Write = () => {
                 💡 AI回答将插入到文档光标位置 (第 {cursorPosition} 个字符)。
               </div>
             ) : (
-              // 如果光标未设置
               <div
                 style={{
                   fontSize: '12px',
-                  color: '#f5222d', // 错误色，提醒用户
+                  color: '#f5222d',
                   padding: '6px 10px',
                   backgroundColor: '#fff1f0',
                   borderRadius: '4px',

@@ -1,10 +1,9 @@
 <div align="center">
-  <img src="assets/ragflow-plus.png" width="400" alt="Ragflow-Plus">
-
+  <img src="docs/images/ragflow-plus.png" width="400" alt="Ragflow-Plus">
 </div>
 
 <div align="center">
-  <img src="https://img.shields.io/badge/版本-0.4.0-blue" alt="版本">
+  <img src="https://img.shields.io/badge/版本-0.4.1-blue" alt="版本">
   <a href="LICENSE"><img src="https://img.shields.io/badge/许可证-AGPL3.0-green" alt="许可证"></a>
   <h4>
     <a href="README.md">🇨🇳 中文</a>
@@ -56,21 +55,19 @@ ollama pull bge-m3:latest
 前台添加时，模型名称设为`bge-m3`，模型地址设为`http://host.docker.internal:11434`
 
 
-## 🚧施工提醒
+## 🚧绕路提醒
 
 请注意：
 
-1. 本项目仍处于早期的实验版本，不建议直接放到生产环境中使用。
-
-2. 本项目重构了多处ragflow的底层接口，不建议和原始ragflow项目同时使用，存在冲突风险。
+1. 本项目重构了多处ragflow的底层接口，不建议和原始ragflow项目同时使用，存在冲突风险。
     
     如果只需要后台的用户/团队管理部分，可修改`web/.env`中`RAGFLOWPLUS_MANAGEMENT_WEB_IMAGE`和`RAGFLOWPLUS_MANAGEMENT_SERVER_IMAGE`的版本为 v0.1.2
 
-3. 本项目专注RAG，移除Agent的部分，如有Agent需求，请绕路。
+2. 本项目专注RAG，移除Agent的部分，如有Agent需求，请绕路。
 
-4. 本项目重写了文件解析模块(embedding模型固定为bge-m3)，如需原本DeepDoc分块、知识图谱功能，请绕路。
+3. 本项目重写了文件解析模块(embedding模型固定为bge-m3)，如需原本DeepDoc分块、知识图谱功能，请绕路。
 
-5. 本项目为ragflow(v0.17.2)版本的独立分支，不会完全按照ragflow的内容进行更新。
+4. 本项目为ragflow(v0.17.2)版本的独立分支，不会完全按照ragflow的内容进行更新。
 
 ## 📥使用方式
 
@@ -103,7 +100,7 @@ ollama pull bge-m3:latest
 访问地址：`服务器ip:8888`，进入到后台管理界面
 
 
-#### 2. 源码运行(mysql、minio、es等组件仍需docker启动)
+#### 2. 源码运行(mysql、minio、es、redis等组件仍需docker启动)
 
 1. 启动后台管理系统：
 
@@ -194,7 +191,7 @@ ollama pull bge-m3:latest
    - **不修改代码**：若仅原样运行（不修改、不衍生），仍需遵守AGPLv3，包括：  
      - 提供完整的源代码（即使未修改）。  
      - 若作为网络服务提供，需允许用户下载对应源码（AGPLv3第13条）。
-   - **不允许闭源商用**：如需闭源（不公开修改后的代码）商用，需获得获得所有代码版权持有人的书面授权（包括上游AGPLv3代码作者）  
+   - **不允许闭源商用**：如需闭源（不公开修改后的代码）商用，需获得所有代码版权持有人的书面授权（包括上游AGPLv3代码作者）  
 
 3. **免责声明**  
    本项目不提供任何担保，使用者需自行承担合规风险。若需法律建议，请咨询专业律师。

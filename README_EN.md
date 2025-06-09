@@ -1,9 +1,9 @@
 <div align="center">
-  <img src="assets/ragflow-plus.png" width="400" alt="Ragflow-Plus">
+  <img src="docs/images/ragflow-plus.png" width="400" alt="Ragflow-Plus">
 </div>
 
 <div align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.4.1-blue" alt="Version">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL3.0-green" alt="License"></a>
   <h4>
     <a href="README.md">🇨🇳 Chinese</a>
@@ -58,7 +58,7 @@ Access the admin dashboard at: `your-server-ip:8888`
 
 📘 Step-by-step tutorial: [https://blog.csdn.net/qq1198768105/article/details/147475488](https://blog.csdn.net/qq1198768105/article/details/147475488)
 
-#### 2. Run from Source Code (Docker is still required for MySQL, MinIO, Elasticsearch, etc.)
+#### 2. Run from Source Code (Docker is still required for MySQL, MinIO, Elasticsearch, Redis, etc.)
 
 1. Start the Admin System:
 

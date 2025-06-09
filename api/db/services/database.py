@@ -1,6 +1,6 @@
 import mysql.connector
 import os
-import valkey as redis
+import redis
 from minio import Minio
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
@@ -28,6 +28,7 @@ if is_running_in_docker():
     MYSQL_HOST = "mysql"
     MYSQL_PORT = 3306
     MINIO_HOST = "minio"
+    MINIO_VISIT_HOST = "localhost"
     MINIO_PORT = 9000
     ES_HOST = "es01"
     ES_PORT = 9200
@@ -37,6 +38,7 @@ else:
     MYSQL_HOST = "localhost"
     MYSQL_PORT = int(os.getenv("MYSQL_PORT", "5455"))
     MINIO_HOST = "localhost"
+    MINIO_VISIT_HOST = "localhost"
     MINIO_PORT = int(os.getenv("MINIO_PORT", "9000"))
     ES_HOST = "localhost"
     ES_PORT = int(os.getenv("ES_PORT", "9200"))
@@ -51,15 +53,6 @@ DB_CONFIG = {
     "user": "root",
     "password": os.getenv("MYSQL_PASSWORD", "infini_rag_flow"),
     "database": "rag_flow",
-    "connection_timeout": 30,  # 增加连接超时时间
-    "connect_timeout": 30,     # 增加连接建立超时时间
-    "pool_name": "ragflow_pool",  # 添加连接池名称
-    "pool_size": 5,            # 连接池大小
-    "autocommit": True,        # 自动提交事务
-    "failover": {              # 故障转移配置
-        "host": "mysql",       # 备用主机
-        "port": 3306           # 备用端口
-    }
 }
 
 # MinIO连接配置
@@ -68,6 +61,7 @@ MINIO_CONFIG = {
     "access_key": os.getenv("MINIO_USER", "rag_flow"),
     "secret_key": os.getenv("MINIO_PASSWORD", "infini_rag_flow"),
     "secure": False,
+    "visit_point": f"{MINIO_VISIT_HOST}:{MINIO_PORT}",
 }
 
 # Elasticsearch连接配置
@@ -140,39 +134,3 @@ def get_redis_connection():
     except Exception as e:
         print(f"Redis连接失败: {str(e)}")
         raise e
-
-
-def test_connections():
-    """测试数据库和MinIO连接"""
-    try:
-        # 测试MySQL连接
-        db_conn = get_db_connection()
-        cursor = db_conn.cursor()
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
-        cursor.close()
-        db_conn.close()
-        print("MySQL连接测试成功")
-
-        # 测试MinIO连接
-        minio_client = get_minio_client()
-        buckets = minio_client.list_buckets()
-        print(f"MinIO连接测试成功，共有 {len(buckets)} 个存储桶")
-
-        # 测试Elasticsearch连接
-        try:
-            es_client = get_es_client()
-            es_info = es_client.info()
-            print(f"Elasticsearch连接测试成功，版本: {es_info.get('version', {}).get('number', '未知')}")
-        except Exception as e:
-            print(f"Elasticsearch连接测试失败: {str(e)}")
-
-        return True
-    except Exception as e:
-        print(f"连接测试失败: {str(e)}")
-        return False
-
-
-if __name__ == "__main__":
-    # 如果直接运行此文件，则测试连接
-    test_connections()

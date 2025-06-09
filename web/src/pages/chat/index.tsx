@@ -5,6 +5,7 @@ import RenameModal from '@/components/rename-modal';
 import SvgIcon from '@/components/svg-icon';
 import { useTheme } from '@/components/theme-provider';
 import { SharedFrom } from '@/constants/chat';
+import { useSafeLocalStorageState } from '@/hooks/chat-font-hooks';
 import {
   useClickConversationCard,
   useClickDialogCard,
@@ -14,12 +15,7 @@ import {
 import { useTranslate } from '@/hooks/common-hooks';
 import { useSetSelectedRecord } from '@/hooks/logic-hooks';
 import { IDialog } from '@/interfaces/database/chat';
-import { FontStorageUtil } from '@/utils/font-storage';
-import {
-  DeleteOutlined,
-  EditOutlined,
-  SettingOutlined,
-} from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import {
   Avatar,
   Button,
@@ -28,18 +24,17 @@ import {
   Dropdown,
   Flex,
   MenuProps,
-  Modal,
-  Slider,
+  // Modal,
+  // Slider,
   Space,
   Spin,
   Tag,
-  // Tooltip,
   Typography,
 } from 'antd';
 import { MenuItemProps } from 'antd/lib/menu/MenuItem';
 import classNames from 'classnames';
 import { PictureInPicture2 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import ChatConfigurationModal from './chat-configuration-modal';
 import ChatContainer from './chat-container';
 import {
@@ -51,7 +46,11 @@ import {
   useSelectDerivedConversationList,
 } from './hooks';
 import styles from './index.less';
+
 const { Text } = Typography;
+
+const FONT_SIZE_STORAGE_KEY = 'chat_font_size_v2'; // 定义一个清晰的 key (v2 用于避免旧数据干扰)
+const DEFAULT_FONT_SIZE = 20; // 默认字体设为 20
 
 const Chat = () => {
   const { data: dialogList, loading: dialogLoading } = useFetchNextDialogList();
@@ -94,6 +93,12 @@ const Chat = () => {
   const [controller, setController] = useState(new AbortController());
   const { showEmbedModal, hideEmbedModal, embedVisible, beta } =
     useShowEmbedModal();
+
+  const [fontSize, setFontSize] = useSafeLocalStorageState(
+    FONT_SIZE_STORAGE_KEY,
+    DEFAULT_FONT_SIZE,
+  );
+  // const [fontSizeModalVisible, setFontSizeModalVisible] = useState(false);
 
   const handleAppCardEnter = (id: string) => () => {
     handleItemEnter(id);
@@ -166,20 +171,10 @@ const Chat = () => {
     addTemporaryConversation();
   }, [addTemporaryConversation]);
 
-  const [fontSizeModalVisible, setFontSizeModalVisible] = useState(false);
-  const [fontSize, setFontSize] = useState(20); // 默认字体大小
-
-  // 从存储加载字体大小设置
-  useEffect(() => {
-    const savedFontSize = FontStorageUtil.getFontSize();
-    setFontSize(savedFontSize);
-  }, []);
-
-  // 字体大小变化处理
-  const handleFontSizeChange = (value: number) => {
-    setFontSize(value);
-    FontStorageUtil.setFontSize(value);
-  };
+  // 用于自动更新 localStorage
+  // const handleFontSizeChange = (value: number) => {
+  //   setFontSize(value);
+  // };
 
   const buildAppItems = (dialog: IDialog) => {
     const dialogId = dialog.id;
@@ -212,7 +207,6 @@ const Chat = () => {
         onClick: handleShowOverviewModal(dialog),
         label: (
           <Space>
-            {/* <KeyOutlined /> */}
             <PictureInPicture2 className="size-4" />
             {t('embedIntoSite', { keyPrefix: 'common' })}
           </Space>
@@ -318,23 +312,21 @@ const Chat = () => {
               <b>{t('chat')}</b>
               <Tag>{conversationList.length}</Tag>
             </Space>
-            {/* <Tooltip title={t('newChat')}> */}
             <div>
-              <SettingOutlined
+              {/* <SettingOutlined
                 style={{
                   marginRight: '8px',
                   fontSize: '20px',
                   cursor: 'pointer',
                 }}
                 onClick={() => setFontSizeModalVisible(true)}
-              />
+              /> */}
               <SvgIcon
                 name="plus-circle-fill"
                 width={20}
                 onClick={handleCreateTemporaryConversation}
               ></SvgIcon>
             </div>
-            {/* </Tooltip> */}
           </Flex>
           <Divider></Divider>
           <Flex vertical gap={10} className={styles.chatTitleContent}>
@@ -419,7 +411,7 @@ const Chat = () => {
         ></EmbedModal>
       )}
 
-      {fontSizeModalVisible && (
+      {/* {fontSizeModalVisible && (
         <Modal
           title={'设置字体大小'}
           open={fontSizeModalVisible}
@@ -432,13 +424,13 @@ const Chat = () => {
               min={16}
               max={24}
               step={1}
-              defaultValue={fontSize}
+              value={fontSize}
               style={{ width: '80%' }}
               onChange={handleFontSizeChange}
             />
           </Flex>
         </Modal>
-      )}
+      )} */}
     </Flex>
   );
 };
